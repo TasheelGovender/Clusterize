@@ -20,7 +20,7 @@ results/
 # lock files
 package-lock.json
 yarn.lock
-pnpm-lock.yaml
+
 
 # next.js
 /.next/
