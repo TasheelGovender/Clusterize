@@ -71,10 +71,9 @@ class StorageService:
         delay = 0
         for attempt in range(max_retries + 1):
             try:
-                # Add exponential backoff with jitter on retries
+                # Add exponential backoff with jitter only on retries
                 if attempt > 0:
-                    # Random delay between 0.1-0.5 seconds, exponentially increasing
-                    delay = random.uniform(0.1, 0.5) * (1.5 ** attempt)
+                    delay = random.uniform(0.05, 0.2) * (1.5 ** attempt)
                     time.sleep(delay)
                 
                 signed_url_response = self.supabase.storage.from_(str(project_id)).create_signed_url(
@@ -86,16 +85,17 @@ class StorageService:
                 
             except Exception as e:
                 error_msg = str(e).lower()
-                
-                # Check if it's a connection-related error
-                if any(keyword in error_msg for keyword in ['disconnect', 'connection', 'timeout', 'network']):
+                # Treat resource exhaustion as retryable
+                retryable_keywords = [
+                    'disconnect', 'connection', 'timeout', 'network', 'resource temporarily unavailable'
+                ]
+                if any(keyword in error_msg for keyword in retryable_keywords):
                     if attempt < max_retries:
-                        print(f"Connection error for {obj['name']}, retrying in {delay:.2f}s... (attempt {attempt + 1})")
+                        print(f"Retryable error for {obj['name']}, retrying in {delay:.2f}s... (attempt {attempt + 1})")
                         continue
                     else:
                         print(f"Failed to generate URL for {obj['name']} after {max_retries + 1} attempts: {e}")
                 else:
-                    # Non-connection error, don't retry
                     print(f"Non-retryable error for {obj['name']}: {e}")
                     break
                 
@@ -103,37 +103,32 @@ class StorageService:
                 return obj
         
         return obj
-    
+
     def generate_signed_urls_batch(self, project_id: int, objects: List[Dict]) -> List[Dict]:
         """Generate signed URLs in batch with smart error handling and connection management"""
-        
-        # OPTIMIZATION: Adaptive worker count based on batch size
         batch_size = len(objects)
-        # if batch_size <= 5:
-        #     max_workers = 2
-        # elif batch_size <= 15:
-        #     max_workers = 3
-        # elif batch_size <= 30:
-        #     max_workers = 4
-        # else:
-        max_workers = 3
+        # Lower concurrency to reduce rate limit errors
+        if batch_size <= 5:
+            max_workers = 2
+        elif batch_size <= 15:
+            max_workers = 2
+        elif batch_size <= 30:
+            max_workers = 3
+        else:
+            max_workers = 3
 
         print(f"Generating URLs for {batch_size} objects using {max_workers} workers...")
         
-        # Use ThreadPoolExecutor with adaptive worker count and timeout
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             try:
-                # Add timeout to prevent hanging
                 future_to_obj = {
                     executor.submit(self._generate_url_with_smart_retry, project_id, obj): obj
                     for obj in objects
                 }
-                
-                # Process results as they complete with timeout
                 results = []
-                for future in concurrent.futures.as_completed(future_to_obj, timeout=120):  # 2 minute timeout
+                for future in concurrent.futures.as_completed(future_to_obj, timeout=120):
                     try:
-                        result = future.result(timeout=30)  # 30 second per-task timeout
+                        result = future.result(timeout=30)
                         results.append(result)
                     except concurrent.futures.TimeoutError:
                         obj = future_to_obj[future]
@@ -145,22 +140,16 @@ class StorageService:
                         print(f"Unexpected error for {obj['name']}: {e}")
                         obj["url"] = None
                         results.append(obj)
-                
-                # Sort results to maintain original order
                 obj_to_result = {result['name']: result for result in results}
                 objects = [obj_to_result.get(obj['name'], obj) for obj in objects]
-                
             except concurrent.futures.TimeoutError:
                 print("Batch URL generation timed out completely, falling back to sequential")
-                # Complete fallback to sequential processing
                 objects = self._generate_urls_sequential_fallback(project_id, objects)
-        
         return objects
 
     def _generate_urls_sequential_fallback(self, project_id: int, objects: List[Dict]) -> List[Dict]:
         """Fallback sequential URL generation"""
         print("Using sequential fallback...")
-        
         for i, obj in enumerate(objects):
             try:
                 signed_url_response = self.supabase.storage.from_(str(project_id)).create_signed_url(
@@ -168,19 +157,14 @@ class StorageService:
                     24 * 60 * 60
                 )
                 obj["url"] = signed_url_response['signedURL']
-                
-                # Progress indicator
                 if (i + 1) % 5 == 0 or i == len(objects) - 1:
                     print(f"Sequential progress: {i + 1}/{len(objects)}")
-                    
             except Exception as e:
                 print(f"Sequential fallback failed for {obj['name']}: {e}")
                 obj["url"] = None
-                
-            # Small delay to be gentle on the connection
-            if i < len(objects) - 1:  # Don't delay after the last item
-                time.sleep(0.05)  # 50ms delay between requests
-        
+            # Keep the delay short
+            if i < len(objects) - 1:
+                time.sleep(0.02)  # 20ms delay
         return objects
     
     def get_objects_with_filters(self, project_id: int, 
