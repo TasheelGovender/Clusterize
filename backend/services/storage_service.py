@@ -112,12 +112,12 @@ class StorageService:
         if batch_size <= 5:
             max_workers = 2
         elif batch_size <= 15:
-            max_workers = 4
+            max_workers = 3
         elif batch_size <= 30:
-            max_workers = 6
+            max_workers = 4
         else:
-            max_workers = 8  # Reduced from 10
-        
+            max_workers = 5
+
         print(f"Generating URLs for {batch_size} objects using {max_workers} workers...")
         
         # Use ThreadPoolExecutor with adaptive worker count and timeout
