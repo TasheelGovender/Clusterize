@@ -109,14 +109,14 @@ class StorageService:
         
         # OPTIMIZATION: Adaptive worker count based on batch size
         batch_size = len(objects)
-        if batch_size <= 5:
-            max_workers = 2
-        elif batch_size <= 15:
-            max_workers = 3
-        elif batch_size <= 30:
-            max_workers = 4
-        else:
-            max_workers = 5
+        # if batch_size <= 5:
+        #     max_workers = 2
+        # elif batch_size <= 15:
+        #     max_workers = 3
+        # elif batch_size <= 30:
+        #     max_workers = 4
+        # else:
+        max_workers = 3
 
         print(f"Generating URLs for {batch_size} objects using {max_workers} workers...")
         
